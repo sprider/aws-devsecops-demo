@@ -1,0 +1,26 @@
+version: 2
+updates:
+  - package-ecosystem: "maven"
+    directory: "/app-cicd"
+    schedule:
+      interval: "weekly"
+    groups:
+      spring:
+        patterns:
+          - "org.springframework*"
+      security-tools:
+        patterns:
+          - "org.owasp*"
+          - "com.github.spotbugs*"
+  - package-ecosystem: "terraform"
+    directory: "/platform-terraform"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "docker"
+    directory: "/app-cicd"
+    schedule:
+      interval: "weekly"
+    groups:
+      base-images:
+        patterns:
+          - "*"

@@ -1,0 +1,104 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Maven build artifacts (only include compiled JAR in image)
+target/test-classes/
+target/maven-status/
+target/maven-archiver/
+target/surefire-reports/
+target/generated-sources/
+target/generated-test-sources/
+
+# Test and development files
+src/test/
+*.md
+README*
+
+# Security and compliance reports
+reports/
+syft/
+sbom*.json
+dependency-check-report.*
+spotbugs*.xml
+checkstyle-result.xml
+
+# Performance test results
+performance/
+*.jtl
+*.jmx
+
+# IDE files
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# Kubernetes manifests (not needed in image)
+k8s/
+buildspec.yml
+
+# CI/CD files
+.github/
+.gitlab-ci.yml
+Jenkinsfile
+
+# Secrets and credentials (CRITICAL - never include in Docker image)
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+credentials
+credentials.json
+*credentials.json
+*.env
+.env*
+.envrc
+*password*
+*token*
+*.tfstate
+*.tfstate.*
+kubeconfig
+.kube/
+.aws/
+.ssh/
+
+# Terraform files (not needed in container)
+*.tf
+*.tfvars
+.terraform/
+
+# Build tools configuration
+pom.xml.tag
+pom.xml.releaseBackup
+pom.xml.versionsBackup
+release.properties
+
+# Additional test files
+test-local.sh
+*.test
+*_test.go

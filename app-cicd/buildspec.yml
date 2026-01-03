@@ -1,0 +1,116 @@
+version: 0.2
+env:
+  shell: bash
+  variables:
+    REPORT_DIR: reports
+phases:
+  install:
+    runtime-versions:
+      java: corretto17
+    commands:
+      - set -euo pipefail
+      - echo "Installing CLI tooling"
+      - sudo apt-get update -y > /dev/null
+      - sudo apt-get install -y jq gettext > /dev/null
+      - pip3 install --user detect-secrets
+      - curl -sSfL https://github.com/open-policy-agent/conftest/releases/download/v0.39.2/conftest_0.39.2_Linux_x86_64.tar.gz | tar -xz -C /usr/local/bin conftest
+      - curl -sSfL https://get.anchore.io/syft | sudo sh -s -- -b /usr/local/bin
+      - echo "Downloading kubectl"
+      - curl -fsSLo /tmp/kubectl "https://dl.k8s.io/release/$(curl -fsSL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" || (echo "kubectl download failed" && exit 1)
+      - echo "kubectl downloaded successfully"
+      - ls -lh /tmp/kubectl
+      - file /tmp/kubectl
+      - chmod +x /tmp/kubectl
+      - export PATH="/tmp:$PATH"
+      - curl -sSLo apache-jmeter.tgz https://dlcdn.apache.org/jmeter/binaries/apache-jmeter-5.6.3.tgz
+      - tar -xzf apache-jmeter.tgz
+      - export JMETER_HOME=$PWD/apache-jmeter-5.6.3
+      - export PATH="$HOME/.local/bin:$PATH"
+      - mkdir -p $REPORT_DIR syft rendered performance
+  pre_build:
+    commands:
+      - set -euo pipefail
+      - export PATH="$HOME/.local/bin:$PATH"
+      - export JMETER_HOME=$CODEBUILD_SRC_DIR/apache-jmeter-5.6.3
+      - ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+      - COMMIT_HASH=${CODEBUILD_RESOLVED_SOURCE_VERSION:0:7}
+      - VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+      - BUILD_NUM=${CODEBUILD_BUILD_NUMBER:-1}
+      - IMAGE_TAG="${VERSION}-${COMMIT_HASH}-${BUILD_NUM}"
+      - IMAGE_URI="${ECR_REPO_URI}:${IMAGE_TAG}"
+      - RUN_PERF_TESTS=false
+      - if [[ "${CODEBUILD_WEBHOOK_TRIGGER:-}" == tag/* ]]; then RUN_PERF_TESTS=true; fi
+      - export RUN_PERF_TESTS
+      - RUN_DEPENDENCY_CHECK=${RUN_DEPENDENCY_CHECK:-false}
+      - export RUN_DEPENDENCY_CHECK
+      - echo "Using image ${IMAGE_URI}"
+      - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin ${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
+      - echo "Running secret scanning"
+      - detect-secrets scan --all-files > $REPORT_DIR/detect-secrets.json
+      - echo "Running Checkstyle + SpotBugs"
+      - mvn -B -DskipTests checkstyle:check spotbugs:check
+      - cp target/spotbugsXml.xml $REPORT_DIR/spotbugs.xml
+      - cp target/checkstyle-result.xml $REPORT_DIR/checkstyle.xml
+      - |
+        if [[ "$RUN_DEPENDENCY_CHECK" == "true" ]]; then
+          echo "Running OWASP Dependency-Check (this takes 20+ minutes on first run without NVD API key)"
+          mvn -B org.owasp:dependency-check-maven:aggregate || echo "WARNING: Dependency-Check failed, continuing..."
+          cp target/dependency-check-report.json $REPORT_DIR/dependency-check.json 2>/dev/null || echo "{}" > $REPORT_DIR/dependency-check.json
+        else
+          echo "Skipping OWASP Dependency-Check (set RUN_DEPENDENCY_CHECK=true to enable)"
+          echo "{}" > $REPORT_DIR/dependency-check.json
+        fi
+  build:
+    commands:
+      - set -euo pipefail
+      - export PATH="$HOME/.local/bin:$PATH"
+      - export JMETER_HOME=$CODEBUILD_SRC_DIR/apache-jmeter-5.6.3
+      - echo "Running unit tests with coverage"
+      - mvn -B verify -Ddependency-check.skip=true
+      - cp target/site/jacoco/jacoco.xml $REPORT_DIR/jacoco-coverage.xml
+      - echo "Building container image"
+      - docker build -t ${IMAGE_URI} .
+  post_build:
+    commands:
+      - set -euo pipefail
+      - export PATH="$HOME/.local/bin:$PATH"
+      - export JMETER_HOME=$CODEBUILD_SRC_DIR/apache-jmeter-5.6.3
+      - echo "Pushing image"
+      - docker push ${IMAGE_URI}
+      - echo "Generating SBOM via Syft"
+      - syft ${IMAGE_URI} -o spdx-json > syft/sbom-${IMAGE_TAG}.json
+      - echo "Rendering Kubernetes manifests"
+      - export IMAGE_URI TARGET_GROUP_ARN ALB_SECURITY_GROUP_ID
+      - for manifest in k8s/*.yaml; do envsubst < "$manifest" > "rendered/$(basename "$manifest")"; done
+      - echo "Running Conftest policy checks"
+      - conftest test rendered --policy policies
+      - echo "Uploading compliance evidence"
+      - aws s3 cp $REPORT_DIR s3://${COMPLIANCE_BUCKET}/${CODEBUILD_BUILD_NUMBER}/reports --recursive
+      - aws s3 cp syft s3://${COMPLIANCE_BUCKET}/${CODEBUILD_BUILD_NUMBER}/sbom --recursive
+      - export PATH="/tmp:$PATH"
+      - echo "Assuming EKS deploy role"
+      - CREDS=$(aws sts assume-role --role-arn ${DEPLOY_ROLE_ARN} --role-session-name devsecops-deploy)
+      - export AWS_ACCESS_KEY_ID=$(echo $CREDS | jq -r .Credentials.AccessKeyId)
+      - export AWS_SECRET_ACCESS_KEY=$(echo $CREDS | jq -r .Credentials.SecretAccessKey)
+      - export AWS_SESSION_TOKEN=$(echo $CREDS | jq -r .Credentials.SessionToken)
+      - aws eks update-kubeconfig --name ${CLUSTER_NAME} --region ${AWS_REGION}
+      - echo "Verifying kubectl binary"
+      - ls -lah /tmp/kubectl
+      - file /tmp/kubectl
+      - head -n 1 /tmp/kubectl || echo "kubectl is binary"
+      - echo "Applying Kubernetes manifests"
+      - kubectl apply -f rendered/namespace.yaml
+      - kubectl apply -f rendered/deployment.yaml
+      - kubectl apply -f rendered/pdb.yaml
+      - kubectl apply -f rendered/service.yaml
+      - kubectl apply -f rendered/hpa.yaml
+      - kubectl apply -f rendered/targetgroupbinding.yaml
+      - kubectl rollout status deployment/devsecops-demo -n ${K8S_NAMESPACE}
+      - if [[ "$RUN_PERF_TESTS" == "true" ]]; then echo "Running JMeter test"; ${JMETER_HOME}/bin/jmeter -n -t performance-tests/load-test.jmx -JbaseUrl="https://${ALB_DNS_NAME}" -l performance/jmeter-results.jtl -e -o performance/report; aws s3 cp performance s3://${COMPLIANCE_BUCKET}/${CODEBUILD_BUILD_NUMBER}/performance --recursive; else echo "Skipping performance tests"; fi
+      - printf "IMAGE_URI=%s\n" "${IMAGE_URI}" > release-metadata.txt
+artifacts:
+  files:
+    - release-metadata.txt
+    - syft/*.json
+    - reports/*.json
+    - target/dependency-check-report.html

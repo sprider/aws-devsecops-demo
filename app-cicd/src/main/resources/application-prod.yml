@@ -1,0 +1,15 @@
+spring:
+  main:
+    banner-mode: off
+logging:
+  level:
+    root: WARN
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  metrics:
+    export:
+      simple:
+        enabled: true
