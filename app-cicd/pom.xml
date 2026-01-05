@@ -22,7 +22,7 @@
         <spotbugs.version>4.8.6.4</spotbugs.version>
         <checkstyle.version>3.6.0</checkstyle.version>
         <dependency.check.version>10.0.4</dependency.check.version>
-        <jacoco.version>0.8.11</jacoco.version>
+        <jacoco.version>0.8.14</jacoco.version>
     </properties>
 
     <dependencies>
