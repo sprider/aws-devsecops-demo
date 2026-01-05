@@ -20,7 +20,7 @@
     <properties>
         <java.version>17</java.version>
         <spotbugs.version>4.8.6.4</spotbugs.version>
-        <checkstyle.version>3.4.0</checkstyle.version>
+        <checkstyle.version>3.6.0</checkstyle.version>
         <dependency.check.version>10.0.4</dependency.check.version>
         <jacoco.version>0.8.11</jacoco.version>
     </properties>
