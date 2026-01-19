@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM public.ecr.aws/docker/library/maven:3.9.6-eclipse-temurin-17 AS build
+FROM public.ecr.aws/docker/library/maven:3.9.11-eclipse-temurin-25 AS build
 WORKDIR /workspace
 COPY pom.xml ./
 COPY checkstyle.xml ./
